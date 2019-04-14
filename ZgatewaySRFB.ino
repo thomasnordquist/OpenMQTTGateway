@@ -55,7 +55,7 @@ void _rfbSend(byte * message, int times) {
 
     char buffer[RF_MESSAGE_SIZE];
     _rfbToChar(message, buffer);
-    trc("[RFBRIDGE] Sending MESSAGE '%s' %d time(s)\n");
+    trc(F("[RFBRIDGE] Sending MESSAGE '%s' %d time(s)\n"));
 
     for (int i=0; i<times; i++) {
         if (i>0) {
@@ -106,24 +106,27 @@ void _rfbDecode() {
         StaticJsonBuffer<JSON_MSG_BUFFER> jsonBuffer;
         JsonObject& SRFBdata = jsonBuffer.createObject();
         SRFBdata.set("raw", (char *)buffer);
-        
+
+        char Tsyn[4]= {0};
+        extract_char(buffer, Tsyn , 0 ,4, false, true); 
+        int val_Tsyn = (int)strtol(Tsyn, NULL, 10);
+        SRFBdata.set("delay", (int)val_Tsyn);
+
+        char Tlow[4]= {0};
+        extract_char(buffer,Tlow , 4 ,4, false, true);
+        int val_Tlow = (int)strtol(Tlow, NULL, 10);
+        SRFBdata.set("val_Tlow", (int)val_Tlow);
+
+        char Thigh[4]= {0};
+        extract_char(buffer, Thigh , 8 ,4, false, true);
+        int val_Thigh = (int)strtol(Thigh, NULL, 10);
+        SRFBdata.set("val_Thigh", (int)val_Thigh);
+
         char val[8]= {0};
         extract_char(buffer, val, 12 ,8, false,true);
-        SRFBdata.set("value", (char *)val);
-
-        char val_Tsyn[4]= {0};
-        extract_char(buffer, val_Tsyn , 0 ,4, false, true);   
-        SRFBdata.set("delay", (char *)val_Tsyn);
-
-        char val_Thigh[4]= {0};
-        extract_char(buffer, val_Thigh , 4 ,4, false, true);
-        SRFBdata.set("val_Thigh", (char *)val_Thigh);
-
-        char val_Tlow[4]= {0};
-        extract_char(buffer,val_Tlow , 8 ,4, false, true);
-        SRFBdata.set("val_Tlow", (char *)val_Tlow);
+        unsigned long MQTTvalue = (unsigned long)strtoul(val, NULL, 10);
+        SRFBdata.set("value", (unsigned long)MQTTvalue);
         
-        unsigned long MQTTvalue = SRFBdata.get<unsigned long>("value");
         if (!isAduplicate(MQTTvalue) && MQTTvalue!=0) {// conditions to avoid duplications of RF -->MQTT
             trc(F("Adv data SRFBtoMQTT")); 
             pub(subjectSRFBtoMQTT,SRFBdata);
@@ -139,7 +142,7 @@ void _rfbDecode() {
 }
 
 void _rfbAck() {
-    trc("[RFBRIDGE] Sending ACK\n");
+    trc(F("[RFBRIDGE] Sending ACK\n"));
     Serial.println();
     Serial.write(RF_CODE_START);
     Serial.write(RF_CODE_ACK);

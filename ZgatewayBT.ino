@@ -30,6 +30,11 @@ Thanks to wolass https://github.com/wolass for suggesting me HM 10 and dinosd ht
 */
 #ifdef ZgatewayBT
 
+#include <vector>
+using namespace std;
+
+vector<BLEdevice> devices;
+
   #ifdef ESP32
     /*
        Based on Neil Kolban example for IDF: https://github.com/nkolban/esp32-snippets/blob/master/cpp_utils/tests/BLE%20Tests/SampleScan.cpp
@@ -85,7 +90,6 @@ Thanks to wolass https://github.com/wolass for suggesting me HM 10 and dinosd ht
                   } 
                   returnedString = returnedString + String(a,HEX);  
                 }
-                
                 char service_data[returnedString.length()+1];
                 returnedString.toCharArray(service_data,returnedString.length()+1);
                 service_data[returnedString.length()] = '\0';
@@ -93,23 +97,29 @@ Thanks to wolass https://github.com/wolass for suggesting me HM 10 and dinosd ht
                   BLEdata.set("servicedata", service_data);  
                   BLEdata.set("servicedatauuid", (char *)advertisedDevice.getServiceDataUUID().toString().c_str());
                 #endif
-                pub((char *)mactopic.c_str(),BLEdata);
-                
-                if (strstr(BLEdata["servicedatauuid"].as<char*>(),"fe95") != NULL){
-                  trc("Processing BLE device data");
-                  int pos = -1;
-                  pos = strpos(service_data,"209800");
-                  if (pos != -1){
-                    trc("mi flora data reading");
-                    boolean result = process_data(pos - 24,service_data,mac);
+                if((!oneWhite() || isWhite(mac)) && !isBlack(mac)){ //if not black listed mac we go AND if we have no white mac or this mac is  white we go out
+                  pub((char *)mactopic.c_str(),BLEdata);
+                  if (strstr(BLEdata["servicedatauuid"].as<char*>(),"fe95") != NULL){
+                    trc("Processing BLE device data");
+                    int pos = -1;
+                    pos = strpos(service_data,"209800");
+                    if (pos != -1){
+                      trc(F("mi flora data reading"));
+                      #ifdef ZmqttDiscovery
+                        if(!isDiscovered(mac)) MiFloraDiscovery(mac);
+                      #endif
+                      process_data(pos - 24,service_data,mac);
+                    }
+                    pos = -1;
+                    pos = strpos(service_data,"20aa01");
+                    if (pos != -1){
+                      trc(F("mi jia data reading"));
+                      #ifdef ZmqttDiscovery
+                        if(!isDiscovered(mac)) MiJiaDiscovery(mac);
+                      #endif
+                      process_data(pos - 26,service_data,mac);
+                    }
                   }
-                  pos = -1;
-                  pos = strpos(service_data,"20aa01");
-                  if (pos != -1){
-                    trc("mi jia data reading");
-                    boolean result = process_data(pos - 26,service_data,mac);
-                  }
-
                 }
             }
           }
@@ -197,6 +207,10 @@ Thanks to wolass https://github.com/wolass for suggesting me HM 10 and dinosd ht
       delay(100);
       softserial.print(F("AT+RESET"));
       delay(100);
+      #ifdef HM_BLUE_LED_STOP
+        softserial.print(F("AT+PIO11")); // When not connected (as in BLE mode) the LED is off. When connected the LED is solid on.
+      #endif
+      delay(100);
       trc(F("ZgatewayBT HM1X setup done "));
     }
     
@@ -250,6 +264,8 @@ Thanks to wolass https://github.com/wolass for suggesting me HM 10 and dinosd ht
                     BLEdata.set("id", (char *)HomePresenceId.c_str());
                   #endif
                   strupp(d[0].extract);
+                  if(isBlack(d[0].extract)) return false; //if black listed mac we go out
+                  if(oneWhite() && !isWhite(d[0].extract)) return false; //if we have at least one white mac and this mac is not white we go out
                   String topic = subjectBTtoMQTT + String(d[0].extract);
                   int rssi = (int)strtol(d[2].extract, NULL, 16) - 256;
                   BLEdata.set("rssi", (int)rssi);
@@ -267,12 +283,18 @@ Thanks to wolass https://github.com/wolass for suggesting me HM 10 and dinosd ht
                       pos = strpos(d[5].extract,"209800");
                       if (pos != -1) {
                         trc("mi flora data reading");
+                        #ifdef ZmqttDiscovery
+                          if(!isDiscovered(d[0].extract)) MiFloraDiscovery(d[0].extract);
+                        #endif
                         boolean result = process_data(pos - 38,(char *)Service_data.c_str(),d[0].extract);
                       }
                       pos = -1;
                       pos = strpos(d[5].extract,"20aa01");
                       if (pos != -1){
                         trc("mi jia data reading");
+                        #ifdef ZmqttDiscovery
+                          if(!isDiscovered(d[0].extract)) MiJiaDiscovery(d[0].extract);
+                        #endif
                         boolean result = process_data(pos - 40,(char *)Service_data.c_str(),d[0].extract);
                       }
                       return true;
@@ -298,7 +320,65 @@ Thanks to wolass https://github.com/wolass for suggesting me HM 10 and dinosd ht
 
 #endif
 
+#ifdef ZmqttDiscovery
+void MiFloraDiscovery(char * mac){
+  #define MiFloraparametersCount 4
+  trc(F("MiFloraDiscovery"));
+  char * MiFlorasensor[MiFloraparametersCount][8] = {
+     {"sensor", "MiFlora-lux", mac, "illuminance","{{ value_json.lux }}","", "", "lu"} ,
+     {"sensor", "MiFlora-tem", mac,"","{{ value_json.tem }}","", "", "°C"} ,
+     {"sensor", "MiFlora-fer", mac,"","{{ value_json.fer }}","", "", ""} ,
+     {"sensor", "MiFlora-moi", mac,"","{{ value_json.moi }}","", "", "%"}
+     //component type,name,availability topic,device class,value template,payload on, payload off, unit of measurement
+  };
+  
+  for (int i=0;i<MiFloraparametersCount;i++){
+   trc(F("CreateDiscoverySensor"));
+   trc(MiFlorasensor[i][1]);
+   String discovery_topic = String(subjectBTtoMQTT) + String(mac);
+   String unique_id = String(mac) + "-" + MiFlorasensor[i][1];
+   createDiscovery(MiFlorasensor[i][0],
+                    (char *)discovery_topic.c_str(), MiFlorasensor[i][1], (char *)unique_id.c_str(),
+                    will_Topic, MiFlorasensor[i][3], MiFlorasensor[i][4],
+                    MiFlorasensor[i][5], MiFlorasensor[i][6], MiFlorasensor[i][7],
+                    0,"","",true,"");
+  }
+  BLEdevice device;
+  strcpy( device.macAdr, mac );
+  device.isDisc = true;
+  devices.push_back(device);
+}
+
+void MiJiaDiscovery(char * mac){
+  #define MiJiaparametersCount 3
+  trc(F("MiJiaDiscovery"));
+  char * MiJiasensor[MiJiaparametersCount][8] = {
+     {"sensor", "MiJia-batt", mac, "illuminance","{{ value_json.batt }}","", "", "V"} ,
+     {"sensor", "MiJia-tem", mac,"","{{ value_json.tem }}","", "", "°C"} ,
+     {"sensor", "MiJia-hum", mac,"","{{ value_json.hum }}","", "", "%"}
+     //component type,name,availability topic,device class,value template,payload on, payload off, unit of measurement
+  };
+  
+  for (int i=0;i<MiJiaparametersCount;i++){
+   trc(F("CreateDiscoverySensor"));
+   trc(MiJiasensor[i][1]);
+   String discovery_topic = String(subjectBTtoMQTT) + String(mac);
+   String unique_id = String(mac) + "-" + MiJiasensor[i][1];
+   createDiscovery(MiJiasensor[i][0],
+                    (char *)discovery_topic.c_str(), MiJiasensor[i][1], (char *)unique_id.c_str(),
+                    will_Topic, MiJiasensor[i][3], MiJiasensor[i][4],
+                    MiJiasensor[i][5], MiJiasensor[i][6], MiJiasensor[i][7],
+                    0,"","",true,"");
+  }
+  BLEdevice device;
+  strcpy( device.macAdr, mac );
+  device.isDisc = true;
+  devices.push_back(device);
+}
+#endif
+
 boolean process_data(int offset, char * rest_data, char * mac_adress){
+  
   trc(F("Creating BLE buffer"));
   StaticJsonBuffer<JSON_MSG_BUFFER> jsonBuffer;
   JsonObject& BLEdata = jsonBuffer.createObject();
@@ -341,31 +421,25 @@ boolean process_data(int offset, char * rest_data, char * mac_adress){
   // following the value of digit 47 we determine the type of data we get from the sensor
   switch (rest_data[47 + offset]) {
     case '9' :
-          dtostrf(value,0,0,val);
-          BLEdata.set("fer", val);
+          BLEdata.set("fer", (double)value);
     break;
     case '4' :
           if (value > 65000) value = value - 65535;
-          dtostrf(value/10,3,1,val); // temp has to be divided by 10
-          BLEdata.set("tem", val);
+          BLEdata.set("tem", (double)value/10);
     break;
     case '6' :
           if (value > 65000) value = value - 65535;
-          dtostrf(value/10,3,1,val); // hum has to be divided by 10
-          BLEdata.set("hum", val);
+          BLEdata.set("hum", (double)value/10);
     break;
     case '7' :
-          dtostrf(value,0,0,val);
-          BLEdata.set("lux", val);
+          BLEdata.set("lux", (double)value);
      break;
     case '8' :
-          dtostrf(value,0,0,val);
-          BLEdata.set("moi", val);
+          BLEdata.set("moi", (double)value);
      break;
      
     case 'a' : // batteryLevel
-          dtostrf(value,0,0,val);
-          BLEdata.set("batt", val);
+          BLEdata.set("batt", (double)value);
      break;
 
      case 'd' : // temp+hum
@@ -375,15 +449,13 @@ boolean process_data(int offset, char * rest_data, char * mac_adress){
           tempAr[4] = '\0';
           value = strtol(tempAr, NULL, 16);
           if (value > 65000) value = value - 65535;
-          dtostrf(value/10,3,1,val); // hum has to be divided by 10
-          BLEdata.set("hum", val);
+          BLEdata.set("hum", (double)value/10);
           // temperature
           memcpy(tempAr, &data[4], 4);
           tempAr[4] = '\0';
           value = strtol(tempAr, NULL, 16);
           if (value > 65000) value = value - 65535;
-          dtostrf(value/10,3,1,val2); // hum has to be divided by 10
-          BLEdata.set("tem", val2);
+          BLEdata.set("tem", (double)value/10);
      break;
     default:
     trc("can't read values");
@@ -415,5 +487,86 @@ void haRoomPresence(JsonObject& HomePresence){
   pub(subjectHomePresence,HomePresence);
 }
 #endif
+void MQTTtoBT(char * topicOri, JsonObject& BTdata) { // json object decoding
+ if (strcmp(topicOri,subjectMQTTtoBTset) == 0){
+    trc(F("MQTTtoBT json set"));
+    int WLsize =  BTdata["white-list"].size();
+    if(WLsize > 0){
+      for (int i = 0; i < WLsize; i++){
+        const char * whiteMac = BTdata["white-list"][i];
+        setWorBMac((char *)whiteMac, true); //TO DO catch mac adress > 12
+      }
+    }
+    int BLsize =  BTdata["black-list"].size();
+    if(BLsize > 0){
+      for (int i = 0; i < BLsize; i++){
+        const char * blackMac = BTdata["black-list"][i];
+        setWorBMac((char *)blackMac,false); //TO DO catch mac adress > 12
+      }
+    }
+    dumpDevices();
+  }
+}
 
+void setWorBMac(char * mac , boolean isWhite){
+  boolean foundMac = false;
+  for(vector<BLEdevice>::iterator p = devices.begin(); p != devices.end(); ++p){
+    if((strcmp(p->macAdr,mac) == 0)){
+        p->isWhtL = isWhite;
+        p->isBlkL = !isWhite;
+        foundMac = true;
+    }
+  }
+  if (!foundMac) {
+    BLEdevice device;
+    strcpy( device.macAdr,mac );
+    device.isDisc = false;
+    device.isWhtL = isWhite;
+    device.isBlkL = !isWhite;
+    devices.push_back(device);
+  }
+}
+
+boolean oneWhite(){
+  for(vector<BLEdevice>::iterator p = devices.begin(); p != devices.end(); ++p){
+        if(p->isWhtL) return true;
+  }
+  return false;
+}
+
+boolean isWhite(char * mac){
+  for(vector<BLEdevice>::iterator p = devices.begin(); p != devices.end(); ++p){
+    if((strcmp(p->macAdr,mac) == 0)){
+        return p->isWhtL;
+    }
+  }
+  return false;
+}
+
+boolean isBlack(char * mac){
+  for(vector<BLEdevice>::iterator p = devices.begin(); p != devices.end(); ++p){
+    if((strcmp(p->macAdr,mac) == 0)){
+        return p->isBlkL;
+    }
+  }
+  return false;
+}
+
+boolean isDiscovered(char * mac){
+  for(vector<BLEdevice>::iterator p = devices.begin(); p != devices.end(); ++p){
+    if((strcmp(p->macAdr,mac) == 0)){
+        return p->isDisc;
+    }
+  }
+  return false;
+}
+
+void dumpDevices(){
+  for(vector<BLEdevice>::iterator p = devices.begin(); p != devices.end(); ++p){
+    trc(p->macAdr);
+    trc(p->isDisc);
+    trc(p->isWhtL);
+    trc(p->isBlkL);
+  }
+}
 #endif

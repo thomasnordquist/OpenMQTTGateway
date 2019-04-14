@@ -26,7 +26,7 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 /*-------------------VERSION----------------------*/
-#define OMG_VERSION "0.9"
+#define OMG_VERSION "0.9.1"
 
 /*-------------CONFIGURE WIFIMANAGER-------------(only ESP8266 & SONOFF RFBridge)*/
 /*
@@ -80,6 +80,7 @@ char mqtt_port[6] = "1883";
 #define ZgatewayRF     "RF"       //ESP8266, Arduino, ESP32
 //#define ZgatewayRF315  "RF315"    //ESP8266, Arduino, ESP32
 #define ZgatewayIR     "IR"       //ESP8266, Arduino,         Sonoff RF Bridge
+//#define ZgatewayLORA   "LORA"       //ESP8266, Arduino, ESP32
 //#define ZgatewayPilight "Pilight" //ESP8266, Arduino, ESP32
 #define ZgatewayBT     "BT"       //ESP8266, Arduino, ESP32
 //#define ZgatewayRF2    "RF2"      //ESP8266, Arduino, ESP32
@@ -136,9 +137,23 @@ const byte subnet[] = { 255, 255, 255, 0 }; //ip adress
 #define ota_port 8266
 
 /*-------------DEFINE PINs FOR STATUS LEDs----------------*/
-#define led_receive 40
-#define led_send 42
-#define led_error 44
+#ifdef ESP8266
+  #define led_receive 40
+  #define led_send 42
+  #define led_info 44
+#elif ESP32
+  #define led_receive 40
+  #define led_send 42
+  #define led_info 44
+#elif __AVR_ATmega2560__ //arduino mega
+  #define led_receive 40
+  #define led_send 42
+  #define led_info 44
+#else //arduino uno/nano
+  #define led_receive 40
+  #define led_send 42
+  #define led_info 44
+#endif
 
 //      VCC   ------------D|-----------/\/\/\/\ -----------------  Arduino PIN
 //                        LED       Resistor 270-510R
@@ -165,10 +180,16 @@ const byte subnet[] = { 255, 255, 255, 0 }; //ip adress
   #define multiCore //comment to don't use multicore function of ESP32 for BLE
 #endif
 
-#define JSON_MSG_BUFFER 512 // Json message max buffer size, don't put 1024 or higher it is causing unexpected behaviour on ESP8266
+#if defined(ESP8266) || defined(ESP32) || defined(__AVR_ATmega2560__) || defined(__AVR_ATmega1280__)
+  #define JSON_MSG_BUFFER 512 // Json message max buffer size, don't put 1024 or higher it is causing unexpected behaviour on ESP8266
+#else // boards with smaller memory
+  #define JSON_MSG_BUFFER 64 // Json message max buffer size, don't put 1024 or higher it is causing unexpected behaviour on ESP8266
+#endif
 
 #define TimeBetweenReadingSYS 120000 // time between system readings (like memory)
 #define subjectSYStoMQTT  Base_Topic Gateway_Name "/SYStoMQTT"
+
+//#define subjectTRACEtoMQTT Base_Topic Gateway_Name "/log" //uncomment if you want to see traces on /log topic
 
 /*-------------------ACTIVATE TRACES----------------------*/
 #define TRACE 1  // commented =  trace off, uncommented = trace on

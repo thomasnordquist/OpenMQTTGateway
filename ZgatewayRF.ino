@@ -47,7 +47,8 @@ void setupRF(){
 void RFtoMQTT(){
 
   if (mySwitch.available()){
-    StaticJsonBuffer<JSON_MSG_BUFFER> jsonBuffer;
+    const int JSON_MSG_CALC_BUFFER = JSON_OBJECT_SIZE(4);
+    StaticJsonBuffer<JSON_MSG_CALC_BUFFER> jsonBuffer;
     JsonObject& RFdata = jsonBuffer.createObject();
     trc(F("Rcv. RF"));
     #ifdef ESP32
@@ -60,10 +61,6 @@ void RFtoMQTT(){
     RFdata.set("length", (int)mySwitch.getReceivedBitlength());
     RFdata.set("delay", (int)mySwitch.getReceivedDelay());
     mySwitch.resetAvailable();
-    
-    trc(F("LED MNG"));
-    digitalWrite(led_receive, LOW);
-    timer_led_receive = millis();
     
     unsigned long MQTTvalue = RFdata.get<unsigned long>("value");
     if (!isAduplicate(MQTTvalue) && MQTTvalue!=0) {// conditions to avoid duplications of RF -->MQTT
@@ -95,7 +92,7 @@ void RFtoMQTTdiscovery(unsigned long MQTTvalue){//on the fly switch creation fro
                     subjectRFtoMQTT, switchRF[1], (char *)getUniqueId(switchRF[1], switchRF[2]).c_str(),
                     will_Topic, switchRF[3], switchRF[4],
                     switchRF[5], switchRF[6], switchRF[7],
-                    true, false, 0,"","",true,subjectMQTTtoRF);
+                    0,"","",true,subjectMQTTtoRF);
 }
 #endif
 
@@ -165,10 +162,13 @@ void MQTTtoRF(char * topicOri, char * datacallback) {
         int valuePRT =  RFdata["protocol"]|1;
         int valuePLSL = RFdata["delay"]|350;
         int valueBITS = RFdata["length"]|24;
+        int valueRPT = RFdata["repeat"]|RF_EMITTER_REPEAT;
+        mySwitch.setRepeatTransmit(valueRPT);
         mySwitch.setProtocol(valuePRT,valuePLSL);
         mySwitch.send(data, valueBITS);
         trc(F("MQTTtoRF OK"));
         pub(subjectGTWRFtoMQTT, RFdata);// we acknowledge the sending by publishing the value to an acknowledgement topic, for the moment even if it is a signal repetition we acknowledge also
+        mySwitch.setRepeatTransmit(RF_EMITTER_REPEAT); // Restore the default value
       }else{
         trc(F("MQTTtoRF Fail json"));
       }
